@@ -27,11 +27,8 @@ Die neue Ratsperiode ab November 2025 wird berücksichtigt.
 
 ## Datenquelle
 
-Verwendet wird die öffentliche OParl-Schnittstelle von mandariOSS.
-
-- [Gremien](https://oparl.mandari.de/oparl/v1/body/277544fa-c7eb-598a-b8fa-458b979ccbec/organizations)
-- [Sitzungen](https://oparl.mandari.de/oparl/v1/body/277544fa-c7eb-598a-b8fa-458b979ccbec/meetings)
-- [Vorlagen](https://oparl.mandari.de/oparl/v1/body/277544fa-c7eb-598a-b8fa-458b979ccbec/papers)
+Verwendet wird die öffentliche OParl-Schnittstelle der kreisfreien Stadt Köln:
+https://buergerinfo.stadt-koeln.de/oparl/system 
 
 Die Daten werden ausschließlich lesend abgerufen.
 
@@ -43,7 +40,7 @@ Geplante Komponenten:
 - Python: Kalendergenerator
 - GitHub Actions: spätere automatisierte Aktualisierung
 - GitHub Pages: spätere Bereitstellung der ICS-Datei
-- mandariOSS: öffentliche Datenquelle
+- Oparl-Schnittstelle Stadt Köln / SOMACOS: öffentliche Datenquelle
 
 Cloudflare und eigene Server werden nicht verwendet.
 
@@ -71,19 +68,10 @@ Das Projekt befindet sich in der Entwicklungs- und Prüfungsphase.
 
 Bereits angelegt:
 
-- `calendar.py`: erste Version des lesenden OParl-Datenabrufs
+- `koeln_gremienkalender.py`: erste Version des lesenden OParl-Datenabrufs
 - `requirements.txt`: Dokumentation der Python-Abhängigkeiten
 - `README.md`: Projektdokumentation
 
-Noch nicht umgesetzt:
-
-- Vollständige Prüfung der OParl-Daten
-- Zuordnung sämtlicher Kölner Gremien
-- Erzeugung der ICS-Datei
-- Stabile Kalenderereignis-UIDs
-- Behandlung von Änderungen und abgesagten Sitzungen
-- GitHub Pages
-- Automatisierte tägliche Aktualisierung
 
 ## Automatisierung
 
