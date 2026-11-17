@@ -71,6 +71,7 @@ Bereits angelegt:
 - `koeln_gremienkalender.py`: erste Version des lesenden OParl-Datenabrufs
 - `requirements.txt`: Dokumentation der Python-Abhängigkeiten
 - `README.md`: Projektdokumentation
+- 'meetings_cache.json' 
 
 
 ## Automatisierung
