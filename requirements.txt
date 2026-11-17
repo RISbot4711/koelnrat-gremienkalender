@@ -1,0 +1,2 @@
+# Keine externen Python-Abhängigkeiten erforderlich.
+# Es werden ausschließlich Python-Standardbibliotheken verwendet.
