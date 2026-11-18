@@ -1,0 +1,62 @@
+name: Kalender aktualisieren
+
+on:
+  # Täglich gegen 05:17 Uhr UTC (etwa 06:17 bzw. 07:17 Uhr deutscher Zeit)
+  schedule:
+    - cron: "17 5 * * *"
+  # Zusätzlich von Hand startbar (Reiter "Actions" → "Run workflow")
+  workflow_dispatch:
+
+# Grundsätzlich nur Leserechte
+permissions:
+  contents: read
+
+# Nie zwei Läufe gleichzeitig
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Kalender erzeugen
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v4
+
+      - name: Kalender erzeugen
+        run: python3 koeln_gremienkalender.py
+
+      - name: Ergebnis prüfen
+        run: |
+          test -s Koelner_Gremienkalender.ics
+          head -n 1 Koelner_Gremienkalender.ics | grep -q "BEGIN:VCALENDAR"
+          tail -n 1 Koelner_Gremienkalender.ics | grep -q "END:VCALENDAR"
+          count=$(grep -c "^BEGIN:VEVENT" Koelner_Gremienkalender.ics)
+          echo "Anzahl Termine: $count"
+          test "$count" -ge 50
+
+      - name: Seite zusammenstellen
+        run: cp Koelner_Gremienkalender.ics site/
+
+      - name: Seite hochladen
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    name: Veröffentlichen
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Auf GitHub Pages veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v4
