@@ -4,9 +4,16 @@
 
 """
 Koelner Gremienkalender
+Version 0.5
 
-Version 0.4
-
+- Direkter OParl-Datenabruf der Stadt Koeln
+- Vollstaendiger Abruf von Organisationen und Sitzungen
+- Pagination
+- Behandlung von HTTP 429
+- Validierung der Serverantworten
+- Keine Mandari-Abhaengigkeiten
+- Kein lokaler Cache
+- Erzeugung einer abonnierbaren ICS-Datei
 """
 
 import json
@@ -20,18 +27,13 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import (
-    urlsplit,
-    parse_qsl,
-    urlencode
-)
+from urllib.parse import urlsplit, parse_qsl
 from urllib.request import (
     Request,
     build_opener,
     HTTPRedirectHandler
 )
 from zoneinfo import ZoneInfo
-
 
 
 # --------------------------------------------------
@@ -60,17 +62,11 @@ MAX_TOTAL_RECORDS = 100000
 TIMEOUT_SECONDS = 20
 PAGE_DELAY_SECONDS = 1.0
 
-USER_AGENT = "KoelnGremienkalender/0.4"
+USER_AGENT = "KoelnGremienkalender/0.5"
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
 STANDARD_MEETING_DURATION = timedelta(hours=2)
-
-SYNC_OVERLAP = timedelta(minutes=5)
-
-CACHE_VERSION = 1
-
-CACHE_FILE = Path("meetings_cache.json")
 
 OUTPUT_FILE = Path("Koelner_Gremienkalender.ics")
 
@@ -102,18 +98,10 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
-def format_utc(value):
-
-    return (
-        value.astimezone(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
-
-
 def parse_timestamp(value):
 
     if not isinstance(value, str):
+
         raise ValueError("Ungueltiger Zeitstempel.")
 
     result = datetime.fromisoformat(
@@ -121,10 +109,10 @@ def parse_timestamp(value):
     )
 
     if result.tzinfo is None:
+
         raise ValueError("Zeitzone fehlt.")
 
     return result.astimezone(timezone.utc)
-
 
 
 # --------------------------------------------------
@@ -157,23 +145,17 @@ def validate_url(url, expected_endpoint):
     if parsed.username or parsed.password:
         raise ValueError("Zugangsdaten sind verboten.")
 
-    if parsed.query:
-
-        parameters = parse_qsl(
-            parsed.query,
-            keep_blank_values=True,
-            strict_parsing=True
-        )
-
-    else:
-
-        parameters = []
+    parameters = parse_qsl(
+        parsed.query,
+        keep_blank_values=True,
+        strict_parsing=True
+    ) if parsed.query else []
 
     seen = set()
 
     for key, value in parameters:
 
-        if key not in ("page", "modified_since"):
+        if key != "page":
             raise ValueError("Unerlaubter URL-Parameter.")
 
         if key in seen:
@@ -181,14 +163,8 @@ def validate_url(url, expected_endpoint):
 
         seen.add(key)
 
-        if key == "page":
-
-            if not value.isdigit() or int(value) < 1:
-                raise ValueError("Ungueltige Seitennummer.")
-
-        if key == "modified_since":
-
-            parse_timestamp(value)
+        if not value.isdigit() or int(value) < 1:
+            raise ValueError("Ungueltige Seitennummer.")
 
     return url
 
@@ -435,33 +411,13 @@ def fetch_page(url, expected_endpoint):
 # 7. GESAMTE ERGEBNISLISTE ABRUFEN
 # --------------------------------------------------
 
-def fetch_collection(
-    name,
-    endpoint,
-    modified_since=None
-):
+def fetch_collection(name, endpoint):
 
     print()
     print("Lese Datenquelle:", name)
+    print("Abrufmodus: Vollstaendig")
 
-    if modified_since is None:
-
-        current_url = endpoint
-
-        print("Abrufmodus: Vollstaendig")
-
-    else:
-
-        current_url = (
-            endpoint
-            + "?"
-            + urlencode({
-                "modified_since": modified_since
-            })
-        )
-
-        print("Abrufmodus: Nur Aenderungen")
-        print("Seit:", modified_since)
+    current_url = endpoint
 
     results = []
     visited_urls = set()
@@ -576,12 +532,6 @@ def fetch_collection(
             "page": str(expected_page + 1)
         }
 
-        if modified_since is not None:
-
-            expected_parameters["modified_since"] = (
-                modified_since
-            )
-
         if next_parameters != expected_parameters:
 
             raise RuntimeError(
@@ -598,91 +548,8 @@ def fetch_collection(
     )
 
 
-
 # --------------------------------------------------
-# 8. CACHE LADEN
-# --------------------------------------------------
-
-def load_cache():
-
-    if not CACHE_FILE.exists():
-
-        print()
-        print("Kein lokaler Cache vorhanden.")
-        print("Vollstaendiger Erstabruf erforderlich.")
-
-        return None
-
-    print()
-    print("Lade lokalen Cache:", CACHE_FILE)
-
-    try:
-
-        with CACHE_FILE.open(
-            "r",
-            encoding="utf-8"
-        ) as file:
-
-            cache = json.load(file)
-
-    except (
-        OSError,
-        json.JSONDecodeError
-    ) as error:
-
-        raise RuntimeError(
-            "Cache konnte nicht gelesen werden. "
-            "Die vorhandene Datei bleibt unveraendert."
-        ) from error
-
-    if not isinstance(cache, dict):
-        raise RuntimeError("Ungueltige Cache-Struktur.")
-
-    if cache.get("version") != CACHE_VERSION:
-
-        raise RuntimeError(
-            "Unbekannte Cache-Version."
-        )
-
-    if not isinstance(cache.get("last_sync_utc"), str):
-
-        raise RuntimeError(
-            "Letzter Synchronisationszeitpunkt fehlt."
-        )
-
-    parse_timestamp(cache["last_sync_utc"])
-
-    for collection_name in (
-        "organizations",
-        "meetings"
-    ):
-
-        collection = cache.get(collection_name)
-
-        if not isinstance(collection, dict):
-
-            raise RuntimeError(
-                "Cache-Bestand fehlt: "
-                + collection_name
-            )
-
-        for record_id, record in collection.items():
-
-            if (
-                not isinstance(record_id, str)
-                or not isinstance(record, dict)
-                or record.get("id") != record_id
-            ):
-
-                raise RuntimeError(
-                    "Ungueltiger Cache-Datensatz."
-                )
-
-    return cache
-
-
-# --------------------------------------------------
-# 9. TOMBSTONES ERKENNEN
+# 8. GELOESCHTE DATENSAETZE ERKENNEN
 # --------------------------------------------------
 
 def is_deleted_record(record):
@@ -694,168 +561,28 @@ def is_deleted_record(record):
         return True
 
     if record.get("type") == "https://schema.oparl.org/1.1/Deleted":
-
         return True
 
     return False
 
 
-
 # --------------------------------------------------
-# 10. AENDERUNGEN AUF DEN CACHE ANWENDEN
-# --------------------------------------------------
-
-def apply_changes(
-    existing_records,
-    changed_records,
-    preserve_deleted=False
-):
-
-    updated = dict(existing_records)
-
-    added = 0
-    modified = 0
-    deleted = 0
-
-    for record in changed_records:
-
-        record_id = record.get("id")
-
-        if not isinstance(record_id, str):
-
-            raise RuntimeError(
-                "Aenderungsdatensatz ohne ID."
-            )
-
-        old_record = updated.get(record_id)
-
-        if is_deleted_record(record):
-
-            if preserve_deleted:
-
-                old_sequence = 0
-
-                if old_record is not None:
-
-                    old_sequence = old_record.get(
-                        "_calendar_sequence",
-                        0
-                    )
-
-                    if (
-                        type(old_sequence) is not int
-                        or old_sequence < 0
-                    ):
-
-                        raise RuntimeError(
-                            "Ungueltige Kalender-Versionsnummer."
-                        )
-
-                    old_comparison = {
-                        key: value
-                        for key, value in old_record.items()
-                        if key != "_calendar_sequence"
-                    }
-
-                    if old_comparison == record:
-
-                        continue
-
-                tombstone = dict(record)
-
-                tombstone["_calendar_sequence"] = (
-                    old_sequence + 1
-                    if old_record is not None
-                    else 0
-                )
-
-                updated[record_id] = tombstone
-
-            else:
-
-                if record_id in updated:
-
-                    del updated[record_id]
-
-            deleted += 1
-            continue
-
-        if old_record is None:
-
-            new_record = dict(record)
-            new_record["_calendar_sequence"] = 0
-
-            updated[record_id] = new_record
-
-            added += 1
-            continue
-
-        old_sequence = old_record.get(
-            "_calendar_sequence",
-            0
-        )
-
-        if (
-            type(old_sequence) is not int
-            or old_sequence < 0
-        ):
-
-            raise RuntimeError(
-                "Ungueltige Kalender-Versionsnummer."
-            )
-
-        old_comparison = {
-            key: value
-            for key, value in old_record.items()
-            if key != "_calendar_sequence"
-        }
-
-        new_comparison = dict(record)
-
-        if old_comparison == new_comparison:
-            continue
-
-        new_record = dict(record)
-
-        new_record["_calendar_sequence"] = (
-            old_sequence + 1
-        )
-
-        updated[record_id] = new_record
-
-        modified += 1
-
-    return (
-        updated,
-        added,
-        modified,
-        deleted
-    )
-
-
-# --------------------------------------------------
-# 11. VOLLSTAENDIGEN CACHE AUFBAUEN
+# 9. DATEN VOLLSTAENDIG ABRUFEN
 # --------------------------------------------------
 
-def create_initial_cache():
+def synchronize_data():
 
     print()
-    print("Starte erstmaligen vollstaendigen Abruf.")
+    print("Starte vollstaendigen OParl-Datenabruf.")
     print("--------------------------------")
 
-    # Synchronisationszeitpunkt vor dem Abruf festlegen.
-    # Dadurch gehen Aenderungen waehrend des Abrufs
-    # bei der naechsten Aktualisierung nicht verloren.
-
-    initial_sync_time = utc_now()
-
     organizations = fetch_collection(
-        "organizations",
+        "Organisationen",
         ENDPOINTS["organizations"]
     )
 
     meetings = fetch_collection(
-        "meetings",
+        "Sitzungen",
         ENDPOINTS["meetings"]
     )
 
@@ -865,219 +592,24 @@ def create_initial_cache():
         if not is_deleted_record(record)
     }
 
-    meeting_data = {}
+    meeting_data = {
+        record["id"]: record
+        for record in meetings
+        if not is_deleted_record(record)
+    }
 
-    for record in meetings:
+    print("--------------------------------")
+    print("Datenabruf abgeschlossen.")
+    print("Organisationen:", len(organization_data))
+    print("Sitzungen:", len(meeting_data))
 
-        if is_deleted_record(record):
-            continue
-
-        meeting_record = dict(record)
-
-        meeting_record["_calendar_sequence"] = 0
-
-        meeting_data[record["id"]] = meeting_record
-
-    cache = {
-        "version": CACHE_VERSION,
-        "last_sync_utc": format_utc(initial_sync_time),
+    return {
         "organizations": organization_data,
         "meetings": meeting_data,
     }
 
-    print("--------------------------------")
-    print("Erstabruf abgeschlossen.")
-    print("Organisationen:", len(organization_data))
-    print("Sitzungen:", len(meeting_data))
-
-    return cache
-
-
-
 # --------------------------------------------------
-# 12. INKREMENTELLE AKTUALISIERUNG
-# --------------------------------------------------
-
-def update_cache(cache):
-
-    print()
-    print("Starte inkrementelle Aktualisierung.")
-    print("--------------------------------")
-
-    previous_sync = parse_timestamp(
-        cache["last_sync_utc"]
-    )
-
-    modified_since = format_utc(
-        previous_sync - SYNC_OVERLAP
-    )
-
-    # Zeitpunkt vor dem Abruf festlegen.
-
-    new_sync_time = utc_now()
-
-    organization_changes = fetch_collection(
-        "organizations",
-        ENDPOINTS["organizations"],
-        modified_since
-    )
-
-    meeting_changes = fetch_collection(
-        "meetings",
-        ENDPOINTS["meetings"],
-        modified_since
-    )
-
-    (
-        updated_organizations,
-        org_added,
-        org_modified,
-        org_deleted
-    ) = apply_changes(
-        cache["organizations"],
-        organization_changes
-    )
-
-    (
-        updated_meetings,
-        meeting_added,
-        meeting_modified,
-        meeting_deleted
-    ) = apply_changes(
-        cache["meetings"],
-        meeting_changes,
-        preserve_deleted=True
-    )
-
-    updated_cache = {
-        "version": CACHE_VERSION,
-        "last_sync_utc": format_utc(new_sync_time),
-        "organizations": updated_organizations,
-        "meetings": updated_meetings,
-    }
-
-    print("--------------------------------")
-    print("Aktualisierung abgeschlossen.")
-    print()
-    print("Organisationen:")
-    print("  Neu:", org_added)
-    print("  Geaendert:", org_modified)
-    print("  Geloescht:", org_deleted)
-    print()
-    print("Sitzungen:")
-    print("  Neu:", meeting_added)
-    print("  Geaendert:", meeting_modified)
-    print("  Geloescht:", meeting_deleted)
-
-    return updated_cache
-
-
-
-# --------------------------------------------------
-# 13. CACHE SICHER SPEICHERN
-# --------------------------------------------------
-
-def save_cache(cache):
-
-    cache_path = CACHE_FILE.resolve()
-
-    temporary_path = None
-
-    try:
-
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="\n",
-            dir=cache_path.parent,
-            prefix=".meetings_cache_",
-            suffix=".tmp",
-            delete=False
-        ) as temporary_file:
-
-            temporary_path = Path(
-                temporary_file.name
-            )
-
-            json.dump(
-                cache,
-                temporary_file,
-                ensure_ascii=False,
-                separators=(",", ":")
-            )
-
-            temporary_file.write("\n")
-
-            temporary_file.flush()
-
-            os.fsync(
-                temporary_file.fileno()
-            )
-
-        os.replace(
-            temporary_path,
-            cache_path
-        )
-
-        print()
-        print("Cache erfolgreich gespeichert.")
-
-    except OSError as error:
-
-        if temporary_path is not None:
-
-            try:
-
-                temporary_path.unlink(
-                    missing_ok=True
-                )
-
-            except OSError:
-                pass
-
-        raise RuntimeError(
-            "Cache konnte nicht sicher gespeichert werden."
-        ) from error
-
-
-
-
-# --------------------------------------------------
-# 14. CACHE AKTUALISIEREN ODER ERSTELLEN
-# --------------------------------------------------
-
-def synchronize_data():
-
-    cache = create_initial_cache()
-
-    return cache
-
-
-
-# --------------------------------------------------
-# 15. ICALENDAR-TEXT SICHER AUFBEREITEN
-# --------------------------------------------------
-
-def escape_ical_text(value):
-
-    if value is None:
-        return ""
-
-    value = str(value)
-
-    value = value.replace("\\", "\\\\")
-    value = value.replace(";", "\\;")
-    value = value.replace(",", "\\,")
-    value = value.replace("\r\n", "\\n")
-    value = value.replace("\n", "\\n")
-    value = value.replace("\r", "\\n")
-
-    return value
-
-
-
-# --------------------------------------------------
-# 16. ICALENDAR-TEXT UND ZEILEN UMBRECHEN
+# 10. ICALENDAR-TEXT SICHER AUFBEREITEN
 # --------------------------------------------------
 
 def escape_ical_text(value):
@@ -1085,12 +617,8 @@ def escape_ical_text(value):
     if not isinstance(value, str):
         value = str(value)
 
-    # Zeilenumbrueche vereinheitlichen
-
     value = value.replace("\r\n", "\n")
     value = value.replace("\r", "\n")
-
-    # Nicht erlaubte Steuerzeichen entfernen
 
     value = "".join(
         character
@@ -1099,8 +627,6 @@ def escape_ical_text(value):
         or ord(character) >= 32
         and ord(character) != 127
     )
-
-    # Sonderzeichen nach ICS-Regeln maskieren
 
     value = value.replace("\\", "\\\\")
     value = value.replace("\n", "\\n")
@@ -1120,18 +646,15 @@ def fold_ical_line(line):
     while encoded:
 
         limit = 75 if first_line else 74
-
         chunk = encoded[:limit]
 
-        if len(encoded) > limit:
+        while (
+            len(chunk) < len(encoded)
+            and chunk
+            and (encoded[len(chunk)] & 0xC0) == 0x80
+        ):
 
-            while (
-                chunk
-                and len(chunk) < len(encoded)
-                and (encoded[len(chunk)] & 0xC0) == 0x80
-            ):
-
-                chunk = chunk[:-1]
+            chunk = chunk[:-1]
 
         if not chunk:
 
@@ -1139,34 +662,25 @@ def fold_ical_line(line):
                 "ICS-Zeilenumbruch fehlgeschlagen."
             )
 
-        result.append(
-            chunk.decode("utf-8")
-        )
+        result.append(chunk.decode("utf-8"))
 
         encoded = encoded[len(chunk):]
-
         first_line = False
 
     if not result:
         return [""]
 
     return [
-        result[0]
-        if index == 0
-        else " " + part
-
+        result[0] if index == 0 else " " + part
         for index, part in enumerate(result)
     ]
 
 
 # --------------------------------------------------
-# 17. ORGANISATIONSNAMEN ERMITTELN
+# 11. ORGANISATIONSNAMEN ERMITTELN
 # --------------------------------------------------
 
-def get_organization_names(
-    meeting,
-    organizations
-):
+def get_organization_names(meeting, organizations):
 
     names = []
 
@@ -1199,16 +713,13 @@ def get_organization_names(
     return names
 
 
-
 # --------------------------------------------------
-# 18. SITZUNGSORT ERMITTELN
+# 12. SITZUNGSORT ERMITTELN
 # --------------------------------------------------
 
 def get_meeting_location(meeting):
 
     parts = []
-
-    # Ausschliesslich standardisierte OParl-Ortsangaben
 
     location = meeting.get("location")
 
@@ -1217,11 +728,7 @@ def get_meeting_location(meeting):
         for field in (
             "name",
             "description",
-            "room",
-            "streetAddress",
-            "postalCode",
-            "locality",
-            "subLocality"
+            "room"
         ):
 
             value = location.get(field)
@@ -1236,9 +743,8 @@ def get_meeting_location(meeting):
     return ", ".join(parts)
 
 
-
 # --------------------------------------------------
-# 19. SITZUNGSDATEN AUFBEREITEN
+# 13. SITZUNGSDATEN AUFBEREITEN
 # --------------------------------------------------
 
 def prepare_meeting(
@@ -1296,7 +802,6 @@ def prepare_meeting(
     ):
 
         end = start + STANDARD_MEETING_DURATION
-
         used_standard_duration = True
 
     name = meeting.get("name")
@@ -1343,17 +848,6 @@ def prepare_meeting(
         + "@koeln-gremienkalender"
     )
 
-    sequence = meeting.get(
-        "_calendar_sequence",
-        0
-    )
-
-    if type(sequence) is not int or sequence < 0:
-
-        raise RuntimeError(
-            "Ungueltige Kalender-Versionsnummer."
-        )
-
     event = {
         "uid": uid,
         "name": name,
@@ -1361,9 +855,7 @@ def prepare_meeting(
         "end": end,
         "location": location,
         "description": description,
-        "url": meeting_id,
         "standard_duration": used_standard_duration,
-        "sequence": sequence,
     }
 
     modified = meeting.get("modified")
@@ -1387,9 +879,8 @@ def prepare_meeting(
     return event, "valid"
 
 
-
 # --------------------------------------------------
-# 20. ICS-TERMIN ERZEUGEN
+# 14. ICS-TERMIN ERZEUGEN
 # --------------------------------------------------
 
 def create_ical_event(event, timestamp):
@@ -1425,12 +916,6 @@ def create_ical_event(event, timestamp):
             + escape_ical_text(event["description"])
         )
 
-    if event.get("url"):
-
-        lines.append(
-            "URL:" + event["url"]
-        )
-
     last_modified = event.get("last_modified")
 
     if last_modified is None:
@@ -1443,29 +928,16 @@ def create_ical_event(event, timestamp):
         )
     )
 
-    sequence = event.get("sequence", 0)
-
-    if type(sequence) is not int or sequence < 0:
-
-        raise RuntimeError(
-            "Ungueltige ICS-Versionsnummer."
-        )
-
-    lines.append(
-        "SEQUENCE:" + str(sequence)
-    )
-
+    lines.append("SEQUENCE:0")
     lines.append("END:VEVENT")
 
     return lines
 
-
-
 # --------------------------------------------------
-# 21. GESAMTE ICS-DATEI ERZEUGEN
+# 15. GESAMTE ICS-DATEI ERZEUGEN
 # --------------------------------------------------
 
-def generate_calendar(cache):
+def generate_calendar(data):
 
     print()
     print("Erzeuge Kalenderdatei")
@@ -1487,8 +959,8 @@ def generate_calendar(cache):
         timezone.utc
     )
 
-    organizations = cache["organizations"]
-    meetings = cache["meetings"]
+    organizations = data["organizations"]
+    meetings = data["meetings"]
 
     events = []
 
@@ -1530,7 +1002,6 @@ def generate_calendar(cache):
             continue
 
         if event["standard_duration"]:
-
             standard_duration_count += 1
 
         events.append(event)
@@ -1577,7 +1048,6 @@ def generate_calendar(cache):
     )
 
     output_path = OUTPUT_FILE.resolve()
-
     temporary_path = None
 
     try:
@@ -1596,10 +1066,7 @@ def generate_calendar(cache):
                 temporary_file.name
             )
 
-            temporary_file.write(
-                ics_content
-            )
-
+            temporary_file.write(ics_content)
             temporary_file.flush()
 
             os.fsync(
@@ -1649,50 +1116,44 @@ def generate_calendar(cache):
 
 
 # --------------------------------------------------
-# 22. HAUPTPROGRAMM
+# 16. HAUPTPROGRAMM
 # --------------------------------------------------
 
 def main():
 
     print()
     print("Kölner Gremienkalender")
-    print("Version 0.4")
+    print("Version 0.5")
     print("--------------------------------")
 
-    cache = synchronize_data()
+    data = synchronize_data()
 
     print()
-    print("Datenbestand erfolgreich synchronisiert.")
+    print("Datenbestand erfolgreich abgerufen.")
 
     print(
         "Organisationen:",
-        len(cache["organizations"])
+        len(data["organizations"])
     )
 
     print(
-        "Sitzungen im Cache:",
-        len(cache["meetings"])
+        "Sitzungen:",
+        len(data["meetings"])
     )
 
-    # Zuerst ICS-Datei erfolgreich erzeugen.
-
-    generate_calendar(cache)
-
-    # Erst danach den Cache dauerhaft speichern.
-
-    save_cache(cache)
+    generate_calendar(data)
 
     print()
     print("--------------------------------")
     print("Verarbeitung erfolgreich abgeschlossen.")
     print("Kalendereintraege wurden erstellt.")
-    print("Cache wurde gespeichert.")
+    print("Kein Cache verwendet.")
     print("Keine automatische Veroeffentlichung.")
     print("--------------------------------")
 
 
 # --------------------------------------------------
-# 23. PROGRAMMSTART
+# 17. PROGRAMMSTART
 # --------------------------------------------------
 
 if __name__ == "__main__":
@@ -1719,5 +1180,3 @@ if __name__ == "__main__":
         )
 
         sys.exit(1)
-
-
