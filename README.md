@@ -41,6 +41,7 @@ Geplante Komponenten:
 - GitHub Actions: spätere automatisierte Aktualisierung
 - GitHub Pages: spätere Bereitstellung der ICS-Datei
 - Oparl-Schnittstelle Stadt Köln / SOMACOS: öffentliche Datenquelle
+- Ausgabe einer ICS-Datei
 
 Cloudflare und eigene Server werden nicht verwendet.
 
