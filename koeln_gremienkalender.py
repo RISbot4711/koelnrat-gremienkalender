@@ -1,17 +1,14 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
-Koelner Gremienkalender
-Version 0.5
+Koelner Gremienkalender - alle Sitzungen des Rates der Stadt Koeln, der Bezirksvertretungen, der Fachausschuesse und weiterer Gremien
 
-- Direkter OParl-Datenabruf der Stadt Koeln
-- Vollstaendiger Abruf von Organisationen und Sitzungen
+- Direkter OParl-Datenabruf des Ratsinformationssystems der Stadt Koeln
+- Vollstaendiger Abruf von Gremien, Sitzungen, Tagesordnungen und den Sitzungs-URLs
 - Pagination
 - Behandlung von HTTP 429
 - Validierung der Serverantworten
-- Keine Mandari-Abhaengigkeiten
 - Kein lokaler Cache
 - Erzeugung einer abonnierbaren ICS-Datei
 """
@@ -55,13 +52,15 @@ ENDPOINTS = {
 # 2. EINSTELLUNGEN
 # --------------------------------------------------
 
+VERSION = "1.0"
+
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_RECORDS = 100000
 
 TIMEOUT_SECONDS = 20
 PAGE_DELAY_SECONDS = 1.0
 
-USER_AGENT = "KoelnGremienkalender/0.5"
+USER_AGENT = "KoelnGremienkalender/" + VERSION
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
@@ -437,13 +436,6 @@ def fetch_collection(name, endpoint):
 
     return results
 
-
-# --------------------------------------------------
-# 8. GELOESCHTE DATENSAETZE ERKENNEN
-# --------------------------------------------------
-
-
-
 # --------------------------------------------------
 # 8. GELOESCHTE DATENSAETZE ERKENNEN
 # --------------------------------------------------
@@ -640,6 +632,136 @@ def get_meeting_location(meeting):
 
 
 # --------------------------------------------------
+# 12a. SITZUNGS-URL UND TAGESORDNUNG
+# --------------------------------------------------
+
+WEB_URL_TEMPLATE = (
+    "https://buergerinfo.stadt-koeln.de/"
+    "si0057.asp?__ksinr="
+)
+
+MAX_AGENDA_ITEMS = 80
+MAX_AGENDA_TEXT_LENGTH = 300
+
+
+def get_meeting_web_url(meeting):
+    """
+    Baut die Web-Adresse der Sitzung aus der OParl-ID.
+    Beispiel-ID:
+    https://buergerinfo.stadt-koeln.de/oparl/bodies/
+    stadtverwaltung_koeln/meetings/36245
+    ergibt:
+    https://buergerinfo.stadt-koeln.de/si0057.asp?__ksinr=36245
+    """
+
+    meeting_id = meeting.get("id")
+
+    if not isinstance(meeting_id, str):
+        return None
+
+    prefix = ENDPOINTS["meetings"] + "/"
+
+    if not meeting_id.startswith(prefix):
+        return None
+
+    number = meeting_id[len(prefix):]
+
+    if not number.isascii() or not number.isdigit():
+        return None
+
+    if len(number) > 10:
+        return None
+
+    return WEB_URL_TEMPLATE + number
+
+
+def get_agenda_lines(meeting):
+    """
+    Liefert die öffentlichen Tagesordnungspunkte als Textzeilen.
+    Mehrfach vorkommende Punkte (mehrere Beratungsvorgänge
+    zum selben Punkt) werden nur einmal aufgeführt.
+    """
+
+    items = meeting.get("agendaItem")
+
+    if not isinstance(items, list):
+        return []
+
+    entries = []
+
+    for index, item in enumerate(items):
+
+        if not isinstance(item, dict):
+            continue
+
+        # Nur ausdrücklich öffentliche Punkte
+        if item.get("public") is not True:
+            continue
+
+        name = item.get("name")
+
+        if not isinstance(name, str) or not name.strip():
+            continue
+
+        # Zeilenumbrüche und doppelte Leerzeichen entfernen
+        name = " ".join(name.split())
+
+        if len(name) > MAX_AGENDA_TEXT_LENGTH:
+
+            name = (
+                name[:MAX_AGENDA_TEXT_LENGTH - 1] + "…"
+            )
+
+        number = item.get("number")
+
+        if isinstance(number, str):
+            number = " ".join(number.split())[:20]
+        else:
+            number = ""
+
+        order = item.get("order")
+
+        if not isinstance(order, int) or isinstance(order, bool):
+            order = 1000000
+
+        entries.append((order, index, number, name))
+
+    entries.sort()
+
+    lines = []
+    seen = set()
+
+    for order, index, number, name in entries:
+
+        key = (number, name)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        # Unterpunkte (z. B. 1.1) leicht einrücken
+        indent = "  " * number.count(".")
+
+        if number:
+            line = indent + number + " " + name
+        else:
+            line = name
+
+        lines.append(line)
+
+    if len(lines) > MAX_AGENDA_ITEMS:
+
+        lines = lines[:MAX_AGENDA_ITEMS]
+
+        lines.append(
+            "… weitere Punkte siehe Ratsinformationssystem"
+        )
+
+    return lines
+
+
+# --------------------------------------------------
 # 13. SITZUNGSDATEN AUFBEREITEN
 # --------------------------------------------------
 
@@ -725,6 +847,23 @@ def prepare_meeting(
             "Gremium: " + ", ".join(organization_names)
         )
 
+    web_url = get_meeting_web_url(meeting)
+
+    if web_url:
+
+        description_parts.append(
+            "Sitzung im Ratsinformationssystem:\n" + web_url
+        )
+
+    agenda_lines = get_agenda_lines(meeting)
+
+    if agenda_lines:
+
+        description_parts.append(
+            "Tagesordnung (öffentlicher Teil):\n"
+            + "\n".join(agenda_lines)
+        )
+
     if used_standard_duration:
 
         description_parts.append(
@@ -751,6 +890,7 @@ def prepare_meeting(
         "end": end,
         "location": location,
         "description": description,
+        "web_url": web_url,
         "standard_duration": used_standard_duration,
     }
 
@@ -773,11 +913,13 @@ def prepare_meeting(
             pass
 
     return event, "valid"
-
-
 # --------------------------------------------------
 # 14. ICS-TERMIN ERZEUGEN
 # --------------------------------------------------
+
+# Startpunkt für die Berechnung der Versionsnummer (SEQUENCE)
+SEQUENCE_START = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
 
 def create_ical_event(event, timestamp):
 
@@ -812,10 +954,34 @@ def create_ical_event(event, timestamp):
             + escape_ical_text(event["description"])
         )
 
+    # Zusätzlich das Standardfeld URL (RFC 5545). Der Wert wurde
+    # bereits streng geprüft und enthält keine Sonderzeichen.
+    if event.get("web_url"):
+
+        lines.append("URL:" + event["web_url"])
+
     last_modified = event.get("last_modified")
 
     if last_modified is None:
+
+        # Kein Änderungszeitpunkt vom Server bekannt:
+        # Version bleibt 0, damit sich der Termin nicht
+        # bei jedem Lauf als "geändert" meldet.
+        sequence = 0
         last_modified = timestamp
+
+    else:
+
+        # Je später die letzte Änderung, desto höher die Version.
+        # Kalender-Apps erkennen so geänderte Sitzungen.
+        sequence = max(
+            0,
+            int(
+                (
+                    last_modified - SEQUENCE_START
+                ).total_seconds()
+            )
+        )
 
     lines.append(
         "LAST-MODIFIED:"
@@ -824,7 +990,7 @@ def create_ical_event(event, timestamp):
         )
     )
 
-    lines.append("SEQUENCE:0")
+    lines.append("SEQUENCE:" + str(sequence))
     lines.append("END:VEVENT")
 
     return lines
@@ -865,6 +1031,7 @@ def generate_calendar(data):
     past_count = 0
     invalid_count = 0
     standard_duration_count = 0
+    web_url_count = 0
 
     for meeting in meetings.values():
 
@@ -899,6 +1066,9 @@ def generate_calendar(data):
 
         if event["standard_duration"]:
             standard_duration_count += 1
+
+        if event.get("web_url"):
+            web_url_count += 1
 
         events.append(event)
 
@@ -1003,6 +1173,13 @@ def generate_calendar(data):
         standard_duration_count
     )
 
+    print(
+        "Sitzungen mit Web-Link:",
+        web_url_count,
+        "von",
+        len(events)
+    )
+
     print("--------------------------------")
     print("ICS-Datei erfolgreich erstellt:")
     print(output_path)
@@ -1019,7 +1196,7 @@ def main():
 
     print()
     print("Kölner Gremienkalender")
-    print("Version 0.5")
+    print("Version " + VERSION)
     print("--------------------------------")
 
     data = synchronize_data()
