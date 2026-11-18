@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Kalender erzeugen
-        run: python3 koeln_gremienkalender.py
+        run: python3 calendar_runner.py
 
       - name: Ergebnis prüfen
         run: |
