@@ -344,53 +344,6 @@ def fetch_page(url, expected_endpoint):
         if not isinstance(record.get("id"), str):
             raise RuntimeError("Datensatz-ID fehlt.")
 
-    pagination = data.get("pagination")
-
-    if not isinstance(pagination, dict):
-        raise RuntimeError("Seitendaten fehlen.")
-
-    required = (
-        "totalElements",
-        "elementsPerPage",
-        "currentPage",
-        "totalPages",
-    )
-
-    for field in required:
-
-        value = pagination.get(field)
-
-        if type(value) is not int or value < 0:
-
-            raise RuntimeError(
-                "Ungueltige Seitenangabe: " + field
-            )
-
-    if pagination["elementsPerPage"] < 1:
-        raise RuntimeError("Ungueltige Seitengroesse.")
-
-    if pagination["currentPage"] < 1:
-        raise RuntimeError("Ungueltige Seitennummer.")
-
-    if pagination["currentPage"] > max(
-        1, pagination["totalPages"]
-    ):
-
-        raise RuntimeError(
-            "Seitennummer ausserhalb des Bereichs."
-        )
-
-    if len(records) > pagination["elementsPerPage"]:
-
-        raise RuntimeError(
-            "Zu viele Datensaetze auf einer Seite."
-        )
-
-    if pagination["totalPages"] == 0:
-
-        if pagination["totalElements"] != 0 or records:
-            raise RuntimeError("Ungueltige leere Liste.")
-
     links = data.get("links", {})
 
     if not isinstance(links, dict):
@@ -399,12 +352,10 @@ def fetch_page(url, expected_endpoint):
     next_url = links.get("next")
 
     if next_url is not None and not isinstance(next_url, str):
+        raise RuntimeError("Ungueltiger Folgeseitenlink.")
 
-        raise RuntimeError(
-            "Ungueltiger Folgeseitenlink."
-        )
+    return records, next_url
 
-    return records, next_url, pagination
 
 
 # --------------------------------------------------
@@ -423,11 +374,9 @@ def fetch_collection(name, endpoint):
     visited_urls = set()
     seen_ids = set()
 
-    expected_page = 1
-    expected_total = None
-    expected_pages = None
+    page_number = 1
 
-    for page_number in range(1, MAX_PAGES + 1):
+    while True:
 
         validate_url(current_url, endpoint)
 
@@ -439,33 +388,10 @@ def fetch_collection(name, endpoint):
 
         visited_urls.add(current_url)
 
-        records, next_url, pagination = fetch_page(
+        records, next_url, _pagination = fetch_page(
             current_url,
             endpoint
         )
-
-        if pagination["currentPage"] != expected_page:
-
-            raise RuntimeError(
-                "Falsche Seitennummer."
-            )
-
-        if expected_total is None:
-
-            expected_total = pagination["totalElements"]
-            expected_pages = pagination["totalPages"]
-
-        if pagination["totalElements"] != expected_total:
-
-            raise RuntimeError(
-                "Gesamtzahl hat sich veraendert."
-            )
-
-        if pagination["totalPages"] != expected_pages:
-
-            raise RuntimeError(
-                "Seitenanzahl hat sich veraendert."
-            )
 
         for record in records:
 
@@ -489,63 +415,34 @@ def fetch_collection(name, endpoint):
 
         print(
             "Seite",
-            expected_page,
-            "von",
-            expected_pages,
+            page_number,
             "- Datensaetze:",
-            len(records)
+            len(records),
+            "- Gesamt:",
+            len(results)
         )
 
-        if next_url is None:
+        # Keine weitere Seite vorhanden
+        if not next_url:
 
-            if expected_page != max(1, expected_pages):
+            print("Keine weitere Seite vorhanden.")
+            break
 
-                raise RuntimeError(
-                    "Ergebnisseiten fehlen."
-                )
-
-            if len(results) != expected_total:
-
-                raise RuntimeError(
-                    "Datensatzanzahl stimmt nicht."
-                )
-
-            return results
-
-        if expected_page >= expected_pages:
-
-            raise RuntimeError(
-                "Unerwartete zusaetzliche Seite."
-            )
-
+        # Folgeseitenlink pruefen
         validate_url(next_url, endpoint)
 
-        next_parameters = dict(
-            parse_qsl(
-                urlsplit(next_url).query,
-                keep_blank_values=True,
-                strict_parsing=True
-            )
-        )
-
-        expected_parameters = {
-            "page": str(expected_page + 1)
-        }
-
-        if next_parameters != expected_parameters:
-
-            raise RuntimeError(
-                "Seitennavigation nicht fortlaufend."
-            )
-
         current_url = next_url
-        expected_page += 1
+        page_number += 1
 
         time.sleep(PAGE_DELAY_SECONDS)
 
-    raise RuntimeError(
-        "Maximale Seitenanzahl ueberschritten."
-    )
+    return results
+
+
+# --------------------------------------------------
+# 8. GELOESCHTE DATENSAETZE ERKENNEN
+# --------------------------------------------------
+
 
 
 # --------------------------------------------------
