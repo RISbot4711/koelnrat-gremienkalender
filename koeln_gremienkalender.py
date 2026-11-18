@@ -55,7 +55,6 @@ ENDPOINTS = {
 # 2. EINSTELLUNGEN
 # --------------------------------------------------
 
-MAX_PAGES = 500
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_RECORDS = 100000
 
