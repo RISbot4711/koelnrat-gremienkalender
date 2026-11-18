@@ -301,8 +301,13 @@ def fetch_page(url, expected_endpoint):
 
         except (URLError, TimeoutError) as error:
 
+            if isinstance(error, URLError):
+                details = str(error.reason)
+            else:
+                details = str(error)
+
             raise RuntimeError(
-                "Datenabruf fehlgeschlagen."
+                "Datenabruf fehlgeschlagen: " + details
             ) from error
 
     else:
