@@ -7,13 +7,6 @@ Koelner Gremienkalender
 
 Version 0.4
 
-Teil 1:
-- Sicherer OParl-Datenabruf
-- Vollstaendiger Erstabruf
-- Inkrementelle Aktualisierung
-- Pagination
-- Behandlung von HTTP 429
-- Validierung der Serverantworten
 """
 
 import json
