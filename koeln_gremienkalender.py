@@ -387,7 +387,7 @@ def fetch_collection(name, endpoint):
 
         visited_urls.add(current_url)
 
-        records, next_url, _pagination = fetch_page(
+        records, next_url = fetch_page(
             current_url,
             endpoint
         )
