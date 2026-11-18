@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kölner Gremienkalender</title>
+<style>
+  :root { --bg: #ffffff; --text: #1a1a1a; --muted: #555555; --accent: #b00020; --box: #f3f3f3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151515; --text: #eeeeee; --muted: #aaaaaa; --accent: #ff6b81; --box: #242424; }
+  }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text);
+         max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+  a { color: var(--accent); }
+  code { background: var(--box); padding: 0.4rem 0.6rem; display: block; overflow-x: auto; border-radius: 4px; }
+  .small { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>Kölner Gremienkalender</h1>
+<p><strong>Testversion.</strong> Alle öffentlichen Sitzungen des Rates, der Ausschüsse und der Bezirksvertretungen der Stadt Köln als abonnierbarer Kalender. Die Beschreibung jedes Termins enthält einen Link zur Sitzung und, sobald veröffentlicht, die Tagesordnung. Der Kalender wird täglich aktualisiert.</p>
+
+<h2>Kalender abonnieren</h2>
+<p><a id="webcal" href="Koelner_Gremienkalender.ics">Direkt im Kalenderprogramm abonnieren</a></p>
+<p class="small">Oder diese Adresse in Ihrem Kalenderprogramm unter „Kalender abonnieren“ bzw. „Kalender per URL hinzufügen“ eintragen:</p>
+<code id="url">Koelner_Gremienkalender.ics</code>
+
+<h2>Datenquelle</h2>
+<p class="small">Datenquelle: Stadt Köln – offenedaten-koeln.de</p>
+<p class="small">Dies ist ein privates Projekt und kein Angebot der Stadt Köln. Alle Angaben ohne Gewähr; maßgeblich ist das Ratsinformationssystem der Stadt Köln.</p>
+
+<script>
+  // Trägt die vollständige Adresse der Kalenderdatei ein
+  (function () {
+    var base = location.href.split("#")[0].split("?")[0].replace(/[^\/]*$/, "");
+    var url = base + "Koelner_Gremienkalender.ics";
+    document.getElementById("url").textContent = url;
+    document.getElementById("webcal").href = url.replace(/^https?:/, "webcal:");
+  })();
+</script>
+</body>
+</html>
